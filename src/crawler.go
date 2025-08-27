@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -42,19 +41,13 @@ func main() {
 
 	base, _ := url.Parse(pageURL)
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.Fatalf("Failed to read body: %v", err)
-	}
-
-	fmt.Printf("Status: %s\n | Content-Type: %s\n | Content-Length: %d\n", resp.Status, resp.Header.Get("Content-Type"), len(body))
-
-	links := doc.Find("a")
-	fmt.Printf("Found %d links\n", links.Length())
-
+	links := make([]string, 5)
 	doc.Find("a[href]").Each(func(index int, item *goquery.Selection) {
+		if index >= 5 {
+			return
+		}
+
 		href, _ := item.Attr("href")
-		fmt.Printf("Found link: %s\n", href)
 		if href == "" {
 			return
 		}
@@ -65,6 +58,8 @@ func main() {
 		}
 
 		abs := base.ResolveReference(u)
-		fmt.Println(abs.String())
+		links[index] = abs.String()
 	})
+
+	fmt.Println(links)
 }

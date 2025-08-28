@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"os"
+	"sync"
 )
 
 type Record struct {
@@ -18,10 +19,10 @@ type JSONChannels struct {
 	errc chan error
 }
 
-func CreateJSONWriter(path string) (*JSONChannels, error) {
+func CreateJSONWriter(path string, wg *sync.WaitGroup) (*JSONChannels, error) {
 	channels := &JSONChannels{
 		ch:   make(chan Record),
-		errc: make(chan error),
+		errc: make(chan error, 1),
 	}
 
 	f, err := os.Create(path)
@@ -33,13 +34,10 @@ func CreateJSONWriter(path string) (*JSONChannels, error) {
 	bufw := bufio.NewWriter(gz)
 	enc := json.NewEncoder(bufw)
 
+	wg.Add(1)
 	go func() {
-		defer func() {
-			_ = bufw.Flush()
-			_ = gz.Close()
-			_ = f.Close()
-			close(channels.errc)
-		}()
+
+		defer wg.Done()
 
 		for r := range channels.ch {
 			if err := enc.Encode(&r); err != nil {
@@ -47,6 +45,10 @@ func CreateJSONWriter(path string) (*JSONChannels, error) {
 				return
 			}
 		}
+
+		bufw.Flush()
+		gz.Close()
+		f.Close()
 
 		channels.errc <- nil
 	}()

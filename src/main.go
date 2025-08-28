@@ -5,11 +5,30 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
 
 	"github.com/PuerkitoBio/goquery"
 )
 
 func main() {
+
+	var wg *sync.WaitGroup = &sync.WaitGroup{}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		log.Fatalf("Failed to get current working directory: %v", err)
+	}
+	path := filepath.Join(cwd, "web_scrape.json.gz")
+	writer, err := CreateJSONWriter(path, wg)
+	if err != nil {
+		log.Fatalf("Failed to create JSON writer: %v", err)
+	}
+
+	fmt.Println("JSON Writer Created", writer)
+
 	pageURL := seedUrls[0]
 
 	client := &http.Client{}
@@ -40,7 +59,7 @@ func main() {
 	}
 
 	txt := doc.Find("body").Text()
-	fmt.Println(txt)
+	writer.ch <- Record{URL: pageURL, Text: txt, FetchedAt: time.Now().Format(time.RFC3339)}
 
 	base, _ := url.Parse(pageURL)
 
@@ -64,5 +83,8 @@ func main() {
 		links[index] = abs.String()
 	})
 
+	writer.ch <- Record{URL: pageURL, Text: txt, FetchedAt: time.Now().Format(time.RFC3339)}
+	close(writer.ch)
+	wg.Wait()
 	fmt.Println(links)
 }

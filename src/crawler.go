@@ -39,6 +39,9 @@ func main() {
 		log.Fatalf("Failed to parse page: %v", err)
 	}
 
+	txt := doc.Find("body").Text()
+	fmt.Println(txt)
+
 	base, _ := url.Parse(pageURL)
 
 	links := make([]string, 5)

@@ -39,18 +39,31 @@ func CreateJSONWriter(path string, wg *sync.WaitGroup) (*JSONChannels, error) {
 
 		defer wg.Done()
 
+		var finalError error
+
 		for r := range channels.ch {
 			if err := enc.Encode(&r); err != nil {
-				channels.errc <- err
+				finalError = err
 				break
 			}
 		}
 
-		bufw.Flush()
-		gz.Close()
-		f.Close()
+		if err := bufw.Flush(); err != nil && finalError == nil {
+			finalError = err
+		}
+		if err := gz.Close(); err != nil && finalError == nil {
+			finalError = err
+		}
+		if err := f.Close(); err != nil && finalError == nil {
+			finalError = err
+		}
 
-		channels.errc <- nil
+		select {
+		case channels.errc <- finalError:
+		default:
+		}
+
+		close(channels.errc)
 	}()
 
 	return channels, nil

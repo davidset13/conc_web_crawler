@@ -1,6 +1,6 @@
 package main
 
-var seedUrls = []string{
+var seedURLs = []string{
 	"https://en.wikipedia.org/wiki/Main_Page",
 	"https://finance.yahoo.com/",
 	"https://arxiv.org/",

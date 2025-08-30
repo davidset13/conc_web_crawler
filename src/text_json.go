@@ -42,7 +42,7 @@ func CreateJSONWriter(path string, wg *sync.WaitGroup) (*JSONChannels, error) {
 		for r := range channels.ch {
 			if err := enc.Encode(&r); err != nil {
 				channels.errc <- err
-				return
+				break
 			}
 		}
 

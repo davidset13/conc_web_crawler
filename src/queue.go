@@ -27,13 +27,14 @@ type CrawlerQueue struct {
 
 func NewCrawlerQueue(concurrency int, frontierCap int, maxVisits int, wg *sync.WaitGroup, JSONWriter *JSONChannels) *CrawlerQueue {
 	return &CrawlerQueue{
-		client:     &http.Client{},
-		sem:        semaphore.NewWeighted(int64(concurrency)),
-		workCh:     make(chan string, frontierCap),
-		wg:         wg,
-		visited:    make(map[string]struct{}),
-		maxVisits:  maxVisits,
-		JSONWriter: JSONWriter,
+		client:      &http.Client{},
+		sem:         semaphore.NewWeighted(int64(concurrency)),
+		workCh:      make(chan string, frontierCap),
+		wg:          wg,
+		visited:     make(map[string]struct{}),
+		maxVisits:   maxVisits,
+		JSONWriter:  JSONWriter,
+		concurrency: concurrency,
 	}
 }
 
@@ -50,7 +51,6 @@ func (q *CrawlerQueue) Enqueue(element string) {
 	if n >= q.maxVisits {
 		q.closeOnce.Do(func() {
 			close(q.workCh)
-			close(q.JSONWriter.ch)
 		})
 		return
 	}
@@ -58,10 +58,12 @@ func (q *CrawlerQueue) Enqueue(element string) {
 	q.wg.Add(1)
 	select {
 	case q.workCh <- element:
+
 	default:
 		q.wg.Done()
 		return
 	}
+
 }
 
 func (q *CrawlerQueue) Work() {

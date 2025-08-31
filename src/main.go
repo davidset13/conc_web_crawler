@@ -12,8 +12,9 @@ func main() {
 		log.Fatalf("Error creating JSON writer: %v", err)
 	}
 
-	crawler := NewCrawlerQueue(10, 1024, 100, collective_wg, JSONWriter)
+	crawler := NewCrawlerQueue(10, 1024, 10, collective_wg, JSONWriter)
 
 	crawler.Run(seedURLs)
 
+	collective_wg.Wait()
 }

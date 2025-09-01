@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
@@ -13,55 +14,64 @@ import (
 )
 
 type CrawlerQueue struct {
-	client          *http.Client
-	sem             *semaphore.Weighted
-	workCh          chan string
-	wg              *sync.WaitGroup
-	mu              sync.Mutex
-	visited         map[string]struct{}
-	closeOnceMain   sync.Once
-	closeOnceWriter sync.Once
-	maxVisits       int
-	JSONWriter      *JSONChannels
-	concurrency     int
+	client      *http.Client
+	sem         *semaphore.Weighted
+	workCh      chan string
+	wg          *sync.WaitGroup
+	mu          sync.Mutex
+	visited     map[string]struct{}
+	closeOnce   sync.Once
+	maxVisits   int32
+	JSONWriter  *JSONChannels
+	concurrency int
+	processed   atomic.Int32
+	ctx         context.Context
+	cancel      context.CancelFunc
 }
 
 func NewCrawlerQueue(concurrency int, frontierCap int, maxVisits int, wg *sync.WaitGroup, JSONWriter *JSONChannels) *CrawlerQueue {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &CrawlerQueue{
 		client:      &http.Client{},
 		sem:         semaphore.NewWeighted(int64(concurrency)),
 		workCh:      make(chan string, frontierCap),
 		wg:          wg,
 		visited:     make(map[string]struct{}),
-		maxVisits:   maxVisits,
+		maxVisits:   int32(maxVisits),
 		JSONWriter:  JSONWriter,
 		concurrency: concurrency,
+		processed:   atomic.Int32{},
+		ctx:         ctx,
+		cancel:      cancel,
 	}
 }
 
 func (q *CrawlerQueue) Enqueue(element string) {
+	select {
+	case <-q.ctx.Done():
+		return
+	default:
+	}
+
 	q.mu.Lock()
 	if _, ok := q.visited[element]; ok {
 		q.mu.Unlock()
 		return
 	}
-	q.visited[element] = struct{}{}
-	n := len(q.visited)
-	q.mu.Unlock()
+	n := int32(len(q.visited))
 
-	if n > q.maxVisits {
-		q.closeOnceMain.Do(func() {
-			close(q.workCh)
-			fmt.Println("Max visits reached")
-		})
+	if n >= q.maxVisits {
+		q.mu.Unlock()
 		return
 	}
+
+	q.visited[element] = struct{}{}
+	q.mu.Unlock()
 
 	q.wg.Add(1)
 	select {
 	case q.workCh <- element:
-		fmt.Println(len(q.visited))
-	default:
+	case <-q.ctx.Done():
 		q.wg.Done()
 		return
 	}
@@ -84,6 +94,7 @@ func (q *CrawlerQueue) Work() {
 				return
 			}
 
+			req = req.WithContext(q.ctx)
 			req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "+
 				"AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0 Safari/537.36")
 
@@ -108,7 +119,15 @@ func (q *CrawlerQueue) Work() {
 
 			txt := doc.Find("body").Text()
 
-			q.JSONWriter.ch <- Record{URL: u, Text: txt, FetchedAt: time.Now().Format(time.RFC3339)}
+			select {
+			case q.JSONWriter.ch <- Record{URL: u, Text: txt, FetchedAt: time.Now().Format(time.RFC3339)}:
+			case <-q.ctx.Done():
+				return
+			}
+
+			if q.ctx.Err() != nil {
+				return
+			}
 
 			base, _ := url.Parse(u)
 			doc.Find("a[href]").Each(func(index int, item *goquery.Selection) {
@@ -130,15 +149,19 @@ func (q *CrawlerQueue) Work() {
 				abs := base.ResolveReference(rel).String()
 
 				q.Enqueue(abs)
-				counter++
-				fmt.Println(counter)
 			})
+
+			m := q.processed.Add(1)
+			if m > q.maxVisits {
+				q.cancel()
+				return
+			}
+
 		}(u)
 	}
 }
 
 func (q *CrawlerQueue) Run(seedURLs []string) {
-
 	for i := 0; i < q.concurrency; i++ {
 		go q.Work()
 	}
@@ -149,14 +172,10 @@ func (q *CrawlerQueue) Run(seedURLs []string) {
 
 	go func() {
 		q.wg.Wait()
-		q.closeOnceMain.Do(func() {
-			close(q.workCh)
-		})
-		q.wgWrite.Wait()
-		q.closeOnceWriter.Do(func() {
+		close(q.workCh)
+		q.closeOnce.Do(func() {
 			close(q.JSONWriter.ch)
+			fmt.Println("Writer wait done")
 		})
-
-		fmt.Println("Worker wait done")
 	}()
 }

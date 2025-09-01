@@ -21,7 +21,7 @@ type JSONChannels struct {
 
 func CreateJSONWriter(path string, wg *sync.WaitGroup) (*JSONChannels, error) {
 	channels := &JSONChannels{
-		ch:   make(chan Record),
+		ch:   make(chan Record, 1024),
 		errc: make(chan error, 1),
 	}
 

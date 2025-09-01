@@ -6,15 +6,18 @@ import (
 )
 
 func main() {
-	collective_wg := &sync.WaitGroup{}
-	JSONWriter, err := CreateJSONWriter("data.json.gz", collective_wg)
+	main_wg := &sync.WaitGroup{}
+	writer_wg := &sync.WaitGroup{}
+	JSONWriter, err := CreateJSONWriter("data.jsonl.gz", writer_wg)
 	if err != nil {
 		log.Fatalf("Error creating JSON writer: %v", err)
 	}
 
-	crawler := NewCrawlerQueue(10, 1024, 10, collective_wg, JSONWriter)
+	crawler := NewCrawlerQueue(10, 1024, 10, main_wg, JSONWriter, writer_wg)
 
 	crawler.Run(seedURLs)
 
-	collective_wg.Wait()
+	main_wg.Wait()
+
+	writer_wg.Wait()
 }

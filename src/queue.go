@@ -13,16 +13,17 @@ import (
 )
 
 type CrawlerQueue struct {
-	client      *http.Client
-	sem         *semaphore.Weighted
-	workCh      chan string
-	wg          *sync.WaitGroup
-	mu          sync.Mutex
-	visited     map[string]struct{}
-	closeOnce   sync.Once
-	maxVisits   int
-	JSONWriter  *JSONChannels
-	concurrency int
+	client          *http.Client
+	sem             *semaphore.Weighted
+	workCh          chan string
+	wg              *sync.WaitGroup
+	mu              sync.Mutex
+	visited         map[string]struct{}
+	closeOnceMain   sync.Once
+	closeOnceWriter sync.Once
+	maxVisits       int
+	JSONWriter      *JSONChannels
+	concurrency     int
 }
 
 func NewCrawlerQueue(concurrency int, frontierCap int, maxVisits int, wg *sync.WaitGroup, JSONWriter *JSONChannels) *CrawlerQueue {
@@ -48,9 +49,10 @@ func (q *CrawlerQueue) Enqueue(element string) {
 	n := len(q.visited)
 	q.mu.Unlock()
 
-	if n >= q.maxVisits {
-		q.closeOnce.Do(func() {
+	if n > q.maxVisits {
+		q.closeOnceMain.Do(func() {
 			close(q.workCh)
+			fmt.Println("Max visits reached")
 		})
 		return
 	}
@@ -58,7 +60,7 @@ func (q *CrawlerQueue) Enqueue(element string) {
 	q.wg.Add(1)
 	select {
 	case q.workCh <- element:
-
+		fmt.Println(len(q.visited))
 	default:
 		q.wg.Done()
 		return
@@ -69,6 +71,7 @@ func (q *CrawlerQueue) Enqueue(element string) {
 func (q *CrawlerQueue) Work() {
 	for u := range q.workCh {
 		func(u string) {
+
 			defer q.wg.Done()
 
 			if err := q.sem.Acquire(context.Background(), 1); err != nil {
@@ -91,6 +94,8 @@ func (q *CrawlerQueue) Work() {
 			resp, err := q.client.Do(req)
 			if err != nil {
 				return
+			} else if resp.StatusCode >= 400 {
+				return
 			}
 			defer resp.Body.Close()
 
@@ -107,7 +112,7 @@ func (q *CrawlerQueue) Work() {
 
 			base, _ := url.Parse(u)
 			doc.Find("a[href]").Each(func(index int, item *goquery.Selection) {
-				if index >= 5 {
+				if index >= 100 {
 					return
 				}
 
@@ -125,6 +130,8 @@ func (q *CrawlerQueue) Work() {
 				abs := base.ResolveReference(rel).String()
 
 				q.Enqueue(abs)
+				counter++
+				fmt.Println(counter)
 			})
 		}(u)
 	}
@@ -142,9 +149,14 @@ func (q *CrawlerQueue) Run(seedURLs []string) {
 
 	go func() {
 		q.wg.Wait()
-		q.closeOnce.Do(func() {
+		q.closeOnceMain.Do(func() {
 			close(q.workCh)
+		})
+		q.wgWrite.Wait()
+		q.closeOnceWriter.Do(func() {
 			close(q.JSONWriter.ch)
 		})
+
+		fmt.Println("Worker wait done")
 	}()
 }

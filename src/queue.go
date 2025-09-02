@@ -29,7 +29,7 @@ type CrawlerQueue struct {
 	cancel      context.CancelFunc
 }
 
-func NewCrawlerQueue(concurrency int, frontierCap int, maxVisits int, wg *sync.WaitGroup, JSONWriter *JSONChannels) *CrawlerQueue {
+func NewCrawlerQueue(concurrency int, frontierCap int, maxVisits int, wg *sync.WaitGroup) *CrawlerQueue {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &CrawlerQueue{
 		client:      &http.Client{},
@@ -38,9 +38,8 @@ func NewCrawlerQueue(concurrency int, frontierCap int, maxVisits int, wg *sync.W
 		wg:          wg,
 		visited:     make(map[string]struct{}),
 		maxVisits:   int32(maxVisits),
-		JSONWriter:  JSONWriter,
+		JSONWriter:  nil,
 		concurrency: concurrency,
-		processed:   atomic.Int32{},
 		ctx:         ctx,
 		cancel:      cancel,
 	}
@@ -49,6 +48,7 @@ func NewCrawlerQueue(concurrency int, frontierCap int, maxVisits int, wg *sync.W
 func (q *CrawlerQueue) Enqueue(element string) {
 	select {
 	case <-q.ctx.Done():
+		fmt.Println("Context done")
 		return
 	default:
 	}
@@ -151,17 +151,12 @@ func (q *CrawlerQueue) Work() {
 				q.Enqueue(abs)
 			})
 
-			m := q.processed.Add(1)
-			if m > q.maxVisits {
-				q.cancel()
-				return
-			}
-
 		}(u)
 	}
 }
 
-func (q *CrawlerQueue) Run(seedURLs []string) {
+func (q *CrawlerQueue) Run(seedURLs []string, JSONWriter *JSONChannels) {
+	q.JSONWriter = JSONWriter
 	for i := 0; i < q.concurrency; i++ {
 		go q.Work()
 	}
@@ -170,12 +165,22 @@ func (q *CrawlerQueue) Run(seedURLs []string) {
 		q.Enqueue(seedURL)
 	}
 
+	prodDone := make(chan struct{})
+
 	go func() {
 		q.wg.Wait()
-		close(q.workCh)
-		q.closeOnce.Do(func() {
-			close(q.JSONWriter.ch)
-			fmt.Println("Writer wait done")
-		})
+		close(prodDone)
+	}()
+
+	go func() {
+		select {
+		case <-q.ctx.Done():
+			return
+		case <-prodDone:
+			q.closeOnce.Do(func() {
+				close(q.JSONWriter.ch)
+				fmt.Println("Writer wait done")
+			})
+		}
 	}()
 }

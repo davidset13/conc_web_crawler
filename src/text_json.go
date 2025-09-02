@@ -20,9 +20,9 @@ type JSONChannels struct {
 	errc chan error
 }
 
-func CreateJSONWriter(path string, wg *sync.WaitGroup) (*JSONChannels, error) {
+func CreateJSONWriter(path string, wg *sync.WaitGroup, q *CrawlerQueue) (*JSONChannels, error) {
 	channels := &JSONChannels{
-		ch:   make(chan Record, 50000),
+		ch:   make(chan Record, 1000000),
 		errc: make(chan error, 1),
 	}
 
@@ -41,12 +41,28 @@ func CreateJSONWriter(path string, wg *sync.WaitGroup) (*JSONChannels, error) {
 		defer wg.Done()
 
 		var finalError error
-
-		for r := range channels.ch {
-			if err := enc.Encode(&r); err != nil {
-				finalError = err
-				fmt.Println("Error encoding record", err)
-				break
+	writer_loop:
+		for {
+			select {
+			case <-q.ctx.Done():
+				break writer_loop
+			case r, ok := <-channels.ch:
+				if !ok {
+					fmt.Println("Channel is Empty! Crawling Succeeded!")
+					break writer_loop
+				}
+				newVal := q.processed.Add(1)
+				if err := enc.Encode(&r); err != nil {
+					finalError = err
+					fmt.Println("Error encoding record", err)
+					continue writer_loop
+				}
+				fmt.Println("Writes Completed: ", newVal)
+				if newVal >= q.maxVisits {
+					q.cancel()
+					fmt.Println("Channel is Empty! Crawling Succeeded!")
+					break writer_loop
+				}
 			}
 		}
 
